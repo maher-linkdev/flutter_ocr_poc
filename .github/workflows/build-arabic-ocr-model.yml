@@ -1,0 +1,54 @@
+# Build arabic_PP-OCRv5_mobile_rec.nb on Linux (paddlelite has no macOS ARM wheels).
+# Run this workflow manually to get the .nb file — then download the artifact.
+name: Build Arabic OCR Model
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install deps
+        run: |
+          pip install "paddlepaddle>=2.5,<2.7" paddleocr paddlelite
+          git clone --depth 1 https://github.com/PaddlePaddle/PaddleOCR PaddleOCR
+          pip install -r PaddleOCR/requirements.txt
+
+      - name: Download pretrained & export
+        run: |
+          curl -sL "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_pretrained_model/arabic_PP-OCRv5_mobile_rec_pretrained.pdparams" -o pretrained.pdparams
+          export FLAGS_enable_pir_api=0
+          python PaddleOCR/tools/export_model.py \
+            -c PaddleOCR/configs/rec/PP-OCRv5/multi_language/arabic_PP-OCRv5_mobile_rec.yaml \
+            -o Global.pretrained_model=$PWD/pretrained Global.save_inference_dir=$PWD/export Global.export_with_pir=False
+
+      - name: Convert to .nb
+        run: |
+          paddle_lite_opt \
+            --model_file=export/inference.pdmodel \
+            --param_file=export/inference.pdiparams \
+            --optimize_out=arabic_PP-OCRv5_mobile_rec \
+            --valid_targets=arm \
+            --optimize_out_type=naive_buffer
+
+      - name: Prepare assets
+        run: |
+          mkdir -p assets/models assets/labels
+          cp arabic_PP-OCRv5_mobile_rec.nb assets/models/
+          curl -sL "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/main/ppocr/utils/dict/ppocrv5_arabic_dict.txt" -o assets/labels/ppocr_keys_arabic_v5.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arabic-ocr-model
+          path: |
+            assets/models/arabic_PP-OCRv5_mobile_rec.nb
+            assets/labels/ppocr_keys_arabic_v5.txt

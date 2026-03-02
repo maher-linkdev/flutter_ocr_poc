@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../application/ocr/logic/ocr_providers.dart';
+import '../../../domain/value_objects/ocr_engine_type.dart';
 import '../../shared/components/error_view.dart';
 import '../../shared/components/loading_indicator.dart';
 import '../components/bounding_box_overlay.dart';
@@ -25,8 +26,21 @@ class _OcrPageState extends ConsumerState<OcrPage> {
     super.initState();
     // Initialize the OCR engine on first load.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(ocrProvider.notifier).initializeEngine();
+      _initEngine();
     });
+  }
+
+  Future<void> _initEngine() async {
+    await ref.read(ocrProvider.notifier).initializeEngine();
+  }
+
+  Future<void> _switchEngine(OcrEngineType newEngine) async {
+    final current = ref.read(ocrEngineTypeProvider);
+    if (current == newEngine) return;
+
+    await ref.read(ocrProvider.notifier).disposeEngine();
+    ref.read(ocrEngineTypeProvider.notifier).state = newEngine;
+    await _initEngine();
   }
 
   @override
@@ -36,7 +50,7 @@ class _OcrPageState extends ConsumerState<OcrPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('PaddleOCR'),
+        title: const Text('OCR'),
         centerTitle: true,
         actions: [
           if (state.hasResult || state.hasImage)
@@ -80,6 +94,11 @@ class _OcrPageState extends ConsumerState<OcrPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // ─── OCR Engine Selector ───
+          _buildEngineSelector(theme),
+
+          const SizedBox(height: 16),
+
           // ─── Image Preview ───
           _buildImageSection(state, theme),
 
@@ -125,6 +144,50 @@ class _OcrPageState extends ConsumerState<OcrPage> {
             OcrResultView(result: state.result!),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildEngineSelector(ThemeData theme) {
+    final engineType = ref.watch(ocrEngineTypeProvider);
+    final state = ref.watch(ocrProvider);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'OCR Engine',
+              style: theme.textTheme.titleSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<OcrEngineType>(
+              segments: OcrEngineType.values
+                  .map((e) => ButtonSegment<OcrEngineType>(
+                        value: e,
+                        label: Text(e.displayName),
+                        icon: Icon(e == OcrEngineType.paddle ? Icons.abc : Icons.text_fields),
+                      ))
+                  .toList(),
+              selected: {engineType},
+              onSelectionChanged: (selected) {
+                if (state.isLoading) return;
+                final newEngine = selected.first;
+                _switchEngine(newEngine);
+              },
+            ),
+            const SizedBox(height: 4),
+            Text(
+              engineType.description,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

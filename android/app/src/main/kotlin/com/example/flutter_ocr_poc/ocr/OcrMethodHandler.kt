@@ -49,6 +49,10 @@ class OcrMethodHandler(
                 val labelFile = call.argument<String>("labelFileName")
                     ?: throw IllegalArgumentException("labelFileName required")
                 val threadCount = call.argument<Int>("threadCount") ?: 4
+                val enableContrastEnhance = call.argument<Boolean>("enableContrastEnhance") ?: false
+                val recOnnxFileName = call.argument<String>("recOnnxFileName")
+                val enablePreprocessing = call.argument<Boolean>("enablePreprocessing") ?: false
+                val superResModelFileName = call.argument<String>("superResModelFileName")
 
                 val engine = PaddleOcrEngine(context)
                 engine.initialize(
@@ -56,7 +60,11 @@ class OcrMethodHandler(
                     recModelFileName = recModel,
                     clsModelFileName = clsModel,
                     labelFileName = labelFile,
-                    threadCount = threadCount
+                    threadCount = threadCount,
+                    enableContrastEnhance = enableContrastEnhance,
+                    recOnnxFileName = recOnnxFileName,
+                    enablePreprocessing = enablePreprocessing,
+                    superResModelFileName = superResModelFileName
                 )
                 ocrEngine = engine
 

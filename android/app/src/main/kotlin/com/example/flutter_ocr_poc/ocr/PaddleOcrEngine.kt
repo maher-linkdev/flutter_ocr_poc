@@ -8,6 +8,8 @@ import android.util.Log
 import com.baidu.paddle.lite.MobileConfig
 import com.baidu.paddle.lite.PaddlePredictor
 import com.baidu.paddle.lite.PowerMode
+import com.example.flutter_ocr_poc.ocr.preprocessing.PreprocessConfig
+import com.example.flutter_ocr_poc.ocr.preprocessing.TextCropPreprocessor
 import java.io.File
 import java.io.FileOutputStream
 import java.util.LinkedList
@@ -45,16 +47,21 @@ class PaddleOcrEngine(private val context: Context) {
         private const val ARABIC_PRESENTATION_B_START = '\uFE70'
         private const val ARABIC_PRESENTATION_B_END = '\uFEFF'
 
-        // Recognition
+        // Recognition (PP-OCRv5 default is height 48; 32 is also supported but 48 often better)
         private const val REC_IMAGE_HEIGHT = 48
 
-        // ImageNet normalization
-        private val MEAN = floatArrayOf(0.485f, 0.456f, 0.406f)
-        private val STD = floatArrayOf(0.229f, 0.224f, 0.225f)
+        // Detection normalization (ImageNet)
+        private val DET_MEAN = floatArrayOf(0.485f, 0.456f, 0.406f)
+        private val DET_STD = floatArrayOf(0.229f, 0.224f, 0.225f)
+
+        // Recognition normalization (PP-OCRv5 uses mean=0.5, std=0.5)
+        private val REC_MEAN = floatArrayOf(0.5f, 0.5f, 0.5f)
+        private val REC_STD = floatArrayOf(0.5f, 0.5f, 0.5f)
     }
 
     private var detPredictor: PaddlePredictor? = null
     private var recPredictor: PaddlePredictor? = null
+    private var recOnnxRunner: RecOnnxRunner? = null
     private var clsPredictor: PaddlePredictor? = null
 
     private var detModelPath: String? = null
@@ -62,42 +69,89 @@ class PaddleOcrEngine(private val context: Context) {
     private var clsModelPath: String? = null
     private var labelPath: String? = null
     private var threadCount: Int = 4
+    private var enableContrastEnhance: Boolean = false
+    private var enablePreprocessing: Boolean = false
     private var isInitialized = false
 
     private var labelList: List<String> = emptyList()
+    private val claheProcessor = ClaheProcessor()
+    private var textCropPreprocessor: TextCropPreprocessor? = null
 
     /**
      * Initialize the OCR engine by copying models and loading predictors.
+     *
+     * @param recOnnxFileName If set, use ONNX Runtime for PaddleOCR Arabic rec.
      */
     fun initialize(
         detModelFileName: String,
         recModelFileName: String,
         clsModelFileName: String,
         labelFileName: String,
-        threadCount: Int = 4
+        threadCount: Int = 4,
+        enableContrastEnhance: Boolean = false,
+        recOnnxFileName: String? = null,
+        enablePreprocessing: Boolean = false,
+        superResModelFileName: String? = null
     ) {
         this.threadCount = threadCount
+        this.enableContrastEnhance = enableContrastEnhance
+        this.enablePreprocessing = enablePreprocessing
 
         // Copy assets to internal storage
         detModelPath = copyAssetToInternal("$MODELS_DIR/$detModelFileName")
-        recModelPath = copyAssetToInternal("$MODELS_DIR/$recModelFileName")
         clsModelPath = copyAssetToInternal("$MODELS_DIR/$clsModelFileName")
         labelPath = copyAssetToInternal("$LABELS_DIR/$labelFileName")
 
         // Load character dictionary
         labelList = loadLabelList(labelPath!!)
 
-        // Load Paddle Lite predictors
+        // Load Paddle Lite predictors (det + cls always; rec only when not using ONNX)
         detPredictor = loadModel(detModelPath!!)
-        recPredictor = loadModel(recModelPath!!)
         clsPredictor = loadModel(clsModelPath!!)
+
+        if (recOnnxFileName != null) {
+            // PaddleOCR Arabic rec via ONNX Runtime
+            val recOnnxPath = copyAssetToInternal("$MODELS_DIR/$recOnnxFileName")
+            recOnnxRunner = RecOnnxRunner(recOnnxPath)
+            recModelPath = recOnnxPath
+            Log.i(TAG, "  Recognition model (PaddleOCR ONNX): $recOnnxPath")
+        } else {
+            // Legacy: Paddle Lite .nb for rec
+            recModelPath = copyAssetToInternal("$MODELS_DIR/$recModelFileName")
+            recPredictor = loadModel(recModelPath!!)
+            Log.i(TAG, "  Recognition model (Paddle Lite): $recModelPath")
+        }
+
+        // Initialize preprocessing pipeline
+        if (enablePreprocessing) {
+            val superResPath = if (superResModelFileName != null) {
+                try {
+                    copyAssetToInternal("$MODELS_DIR/$superResModelFileName")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Super-res model not found, SR disabled: ${e.message}")
+                    null
+                }
+            } else null
+
+            val preprocessConfig = PreprocessConfig(
+                superResModelPath = superResPath
+            )
+            textCropPreprocessor = TextCropPreprocessor(preprocessConfig).also {
+                it.initialize()
+            }
+        }
 
         isInitialized = true
         Log.i(TAG, "OCR Engine initialized successfully")
         Log.i(TAG, "  Detection model: $detModelPath")
-        Log.i(TAG, "  Recognition model: $recModelPath")
         Log.i(TAG, "  Classification model: $clsModelPath")
         Log.i(TAG, "  Label dictionary: ${labelList.size} characters")
+        if (enableContrastEnhance) {
+            Log.i(TAG, "  CLAHE contrast enhancement: enabled")
+        }
+        if (enablePreprocessing) {
+            Log.i(TAG, "  Preprocessing pipeline: enabled")
+        }
     }
 
     /**
@@ -169,6 +223,10 @@ class PaddleOcrEngine(private val context: Context) {
      * Release all native resources.
      */
     fun release() {
+        textCropPreprocessor?.close()
+        textCropPreprocessor = null
+        recOnnxRunner?.close()
+        recOnnxRunner = null
         detPredictor = null
         recPredictor = null
         clsPredictor = null
@@ -200,8 +258,8 @@ class PaddleOcrEngine(private val context: Context) {
         val h = resized.height
         val w = resized.width
 
-        // Convert to CHW float array with normalization
-        val inputData = bitmapToCHW(resized, MEAN, STD)
+        // Convert to CHW float array with ImageNet normalization (detection)
+        val inputData = bitmapToCHW(resized, DET_MEAN, DET_STD)
 
         // Run inference
         val inputTensor = predictor.getInput(0)
@@ -424,7 +482,7 @@ class PaddleOcrEngine(private val context: Context) {
         val clsW = 192
 
         val resized = Bitmap.createScaledBitmap(cropped, clsW, clsH, true)
-        val inputData = bitmapToCHW(resized, MEAN, STD)
+        val inputData = bitmapToCHW(resized, DET_MEAN, DET_STD)
 
         val inputTensor = predictor.getInput(0)
         inputTensor.resize(longArrayOf(1, 3, clsH.toLong(), clsW.toLong()))
@@ -451,19 +509,87 @@ class PaddleOcrEngine(private val context: Context) {
     // ─── Recognition Pipeline ─────────────────────────────────────
 
     /**
+     * Enhance contrast for recognition using CLAHE (Contrast Limited Adaptive Histogram Equalization).
+     * Much better than global stretch for documents with uneven lighting (ID cards, shadowed text).
+     */
+    private fun enhanceContrastForRecognition(bitmap: Bitmap): Bitmap {
+        return claheProcessor.process(bitmap)
+    }
+
+    /**
      * Run text recognition on a cropped text region.
+     * Priority: PaddleOCR ONNX → Paddle Lite.
      */
     private fun runRecognition(bitmap: Bitmap): Pair<String, Float> {
-        val predictor = recPredictor ?: throw IllegalStateException("Recognition model not loaded")
+        val onnxRunner = recOnnxRunner
+        val predictor = recPredictor
 
-        // Resize to fixed height, variable width
+        if (onnxRunner != null) {
+            return runRecognitionOnnx(bitmap, onnxRunner)
+        }
+        if (predictor != null) {
+            return runRecognitionPaddle(bitmap, predictor)
+        }
+        throw IllegalStateException("Recognition model not loaded")
+    }
+
+    private fun runRecognitionOnnx(bitmap: Bitmap, runner: RecOnnxRunner): Pair<String, Float> {
+        var toRecognize = bitmap
+
+        // Preprocessing pipeline (before CLAHE)
+        val preprocessor = textCropPreprocessor
+        if (preprocessor != null) {
+            val preprocessed = preprocessor.process(toRecognize)
+            if (preprocessed !== toRecognize && toRecognize !== bitmap) toRecognize.recycle()
+            toRecognize = preprocessed
+        }
+
+        if (enableContrastEnhance) {
+            val enhanced = enhanceContrastForRecognition(toRecognize)
+            if (enhanced !== toRecognize && toRecognize !== bitmap) toRecognize.recycle()
+            toRecognize = enhanced
+        }
+
         val imgH = REC_IMAGE_HEIGHT
-        val ratio = imgH.toFloat() / bitmap.height
-        var imgW = (bitmap.width * ratio).roundToInt()
-        imgW = max(imgW, 10) // minimum width
+        val ratio = imgH.toFloat() / toRecognize.height
+        var imgW = (toRecognize.width * ratio).roundToInt()
+        imgW = max(imgW, 10)
 
-        val resized = Bitmap.createScaledBitmap(bitmap, imgW, imgH, true)
-        val inputData = bitmapToCHW(resized, MEAN, STD)
+        val resized = Bitmap.createScaledBitmap(toRecognize, imgW, imgH, true)
+        if (toRecognize != bitmap) toRecognize.recycle()
+        val inputData = bitmapToCHW(resized, REC_MEAN, REC_STD)
+
+        val (outputData, outputShape) = runner.run(inputData, imgH, imgW)
+        resized.recycle()
+
+        return ctcGreedyDecode(outputData, outputShape)
+    }
+
+    private fun runRecognitionPaddle(bitmap: Bitmap, predictor: PaddlePredictor): Pair<String, Float> {
+        var toRecognize = bitmap
+
+        // Preprocessing pipeline (before CLAHE)
+        val preprocessor = textCropPreprocessor
+        if (preprocessor != null) {
+            val preprocessed = preprocessor.process(toRecognize)
+            if (preprocessed !== toRecognize && toRecognize !== bitmap) toRecognize.recycle()
+            toRecognize = preprocessed
+        }
+
+        if (enableContrastEnhance) {
+            val enhanced = enhanceContrastForRecognition(toRecognize)
+            if (enhanced !== toRecognize && toRecognize !== bitmap) toRecognize.recycle()
+            toRecognize = enhanced
+        }
+
+        val imgH = REC_IMAGE_HEIGHT
+        val ratio = imgH.toFloat() / toRecognize.height
+        var imgW = (toRecognize.width * ratio).roundToInt()
+        imgW = max(imgW, 10)
+
+        val resized = Bitmap.createScaledBitmap(toRecognize, imgW, imgH, true)
+        if (toRecognize != bitmap) toRecognize.recycle()
+        val inputData = bitmapToCHW(resized, REC_MEAN, REC_STD)
 
         val inputTensor = predictor.getInput(0)
         inputTensor.resize(longArrayOf(1, 3, imgH.toLong(), imgW.toLong()))
@@ -473,10 +599,8 @@ class PaddleOcrEngine(private val context: Context) {
         val outputTensor = predictor.getOutput(0)
         val outputShape = outputTensor.shape()
         val outputData = outputTensor.getFloatData()
-
         resized.recycle()
 
-        // CTC greedy decode
         return ctcGreedyDecode(outputData, outputShape)
     }
 
@@ -509,7 +633,6 @@ class PaddleOcrEngine(private val context: Context) {
             if (maxIdx != 0 && maxIdx != prevIdx) {
                 if (maxIdx < labelList.size) {
                     sb.append(labelList[maxIdx])
-                    // Convert logit to confidence via softmax approximation
                     totalConf += maxVal
                     charCount++
                 }
@@ -518,6 +641,8 @@ class PaddleOcrEngine(private val context: Context) {
         }
 
         var text = sb.toString()
+
+        Log.d(TAG, "CTC decoded ($charCount chars): '$text'")
 
         // Reverse Arabic text: the CTC decoder reads left-to-right but Arabic is RTL.
         // If the text contains Arabic characters, reverse the entire string.
@@ -548,6 +673,7 @@ class PaddleOcrEngine(private val context: Context) {
 
     /**
      * Convert Bitmap to CHW float array with normalization.
+     * Outputs BGR channel order to match PaddleOCR's OpenCV-based training pipeline.
      */
     private fun bitmapToCHW(bitmap: Bitmap, mean: FloatArray, std: FloatArray): FloatArray {
         val w = bitmap.width
@@ -558,9 +684,9 @@ class PaddleOcrEngine(private val context: Context) {
         val floats = FloatArray(3 * h * w)
         for (i in 0 until h * w) {
             val pixel = pixels[i]
-            floats[i] = (((pixel shr 16) and 0xFF) / 255.0f - mean[0]) / std[0]               // R channel
+            floats[i] = ((pixel and 0xFF) / 255.0f - mean[0]) / std[0]                        // B channel
             floats[h * w + i] = (((pixel shr 8) and 0xFF) / 255.0f - mean[1]) / std[1]        // G channel
-            floats[2 * h * w + i] = ((pixel and 0xFF) / 255.0f - mean[2]) / std[2]             // B channel
+            floats[2 * h * w + i] = (((pixel shr 16) and 0xFF) / 255.0f - mean[2]) / std[2]   // R channel
         }
         return floats
     }

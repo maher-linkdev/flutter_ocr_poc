@@ -53,6 +53,9 @@ dependencies {
     // Paddle Lite Java API (local JAR)
     // Place PaddlePredictor.jar in android/app/libs/
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+
+    // ONNX Runtime for Arabic rec (PIR→ONNX path; use when recOnnxFileName is set)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2")
 }
 
 flutter {

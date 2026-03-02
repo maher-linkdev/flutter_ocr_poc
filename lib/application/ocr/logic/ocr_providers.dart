@@ -1,19 +1,32 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../data/datasources/mlkit/mlkit_ocr_datasource.dart';
 import '../../../data/datasources/native/ocr_native_datasource.dart';
 import '../../../data/repositories/ocr_repository_impl.dart';
 import '../../../domain/repositories/ocr_repository.dart';
 import '../../../domain/usecases/dispose_ocr_engine.dart';
 import '../../../domain/usecases/initialize_ocr_engine.dart';
 import '../../../domain/usecases/recognize_text.dart';
+import '../../../domain/value_objects/ocr_engine_type.dart';
 import 'ocr_notifier.dart';
 import 'ocr_state.dart';
 
+// ─── Engine Selection ─────────────────────────────────────────
+
+/// Selected OCR engine. Paddle supports Arabic; ML Kit supports Latin, Chinese, etc. (no Arabic).
+final ocrEngineTypeProvider = StateProvider<OcrEngineType>((ref) => OcrEngineType.paddle);
+
 // ─── Data Layer Providers ─────────────────────────────────────
 
-/// Provides the native OCR data source.
+/// Provides the OCR data source based on selected engine.
 final ocrNativeDataSourceProvider = Provider<OcrNativeDataSource>((ref) {
-  return OcrNativeDataSourceImpl();
+  final engineType = ref.watch(ocrEngineTypeProvider);
+  switch (engineType) {
+    case OcrEngineType.paddle:
+      return OcrNativeDataSourceImpl();
+    case OcrEngineType.mlkit:
+      return MlkOcrDataSource();
+  }
 });
 
 // ─── Repository Provider ──────────────────────────────────────

@@ -38,6 +38,12 @@ class OcrNativeDataSourceImpl implements OcrNativeDataSource {
           'clsModelFileName': AppConstants.clsModelFileName,
           'labelFileName': AppConstants.labelFileName,
           'threadCount': AppConstants.defaultThreadCount,
+          'enableContrastEnhance': AppConstants.enableRecContrastEnhance,
+          if (AppConstants.recOnnxFileName != null)
+            'recOnnxFileName': AppConstants.recOnnxFileName,
+          'enablePreprocessing': AppConstants.enablePreprocessing,
+          if (AppConstants.superResModelFileName != null)
+            'superResModelFileName': AppConstants.superResModelFileName,
         },
       );
       return result ?? false;

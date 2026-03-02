@@ -25,6 +25,9 @@ dependencies:
   # Permissions
   permission_handler: ^11.3.1
 
+  # ML Kit Text Recognition v2 — on-device, offline. Supports Latin, Chinese, Devanagari, Japanese, Korean. No Arabic.
+  google_mlkit_text_recognition: ^0.15.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
