@@ -47,6 +47,12 @@ class PaddleOcrEngine(private val context: Context) {
         private const val ARABIC_PRESENTATION_B_START = '\uFE70'
         private const val ARABIC_PRESENTATION_B_END = '\uFEFF'
 
+        // Arabic-Indic digit ranges (LTR — must NOT trigger RTL reversal)
+        private const val ARABIC_INDIC_DIGIT_START = '\u0660'   // ٠
+        private const val ARABIC_INDIC_DIGIT_END = '\u0669'     // ٩
+        private const val EXTENDED_ARABIC_INDIC_DIGIT_START = '\u06F0' // ۰
+        private const val EXTENDED_ARABIC_INDIC_DIGIT_END = '\u06F9'   // ۹
+
         // Recognition (PP-OCRv5 default is height 48; 32 is also supported but 48 often better)
         private const val REC_IMAGE_HEIGHT = 48
 
@@ -183,8 +189,12 @@ class PaddleOcrEngine(private val context: Context) {
                 val cropped = cropTextRegion(bitmap, box)
                 if (cropped == null || cropped.width < 2 || cropped.height < 2) continue
 
+                // Trim excess background from detection unclip expansion
+                val trimmed = trimCropBackground(cropped)
+                if (trimmed !== cropped) cropped.recycle()
+
                 // Classify text orientation and rotate if needed
-                val oriented = classifyAndRotate(cropped)
+                val oriented = classifyAndRotate(trimmed)
 
                 // Recognize text
                 val (text, confidence) = runRecognition(oriented)
@@ -644,10 +654,10 @@ class PaddleOcrEngine(private val context: Context) {
 
         Log.d(TAG, "CTC decoded ($charCount chars): '$text'")
 
-        // Reverse Arabic text: the CTC decoder reads left-to-right but Arabic is RTL.
-        // If the text contains Arabic characters, reverse the entire string.
+        // Smart Arabic RTL reversal: CTC decoder reads left-to-right but Arabic is RTL.
+        // Reverse overall run order and Arabic letter runs, but keep digit sequences intact.
         if (containsArabic(text)) {
-            text = text.reversed()
+            text = smartArabicReverse(text)
         }
 
         val avgConf = if (charCount > 0) totalConf / charCount else 0f
@@ -658,15 +668,77 @@ class PaddleOcrEngine(private val context: Context) {
     }
 
     /**
-     * Check if a string contains Arabic characters.
+     * Check if a character is an Arabic-Indic digit (U+0660–U+0669 or U+06F0–U+06F9).
+     * These are LTR even in Arabic text and should not trigger RTL reversal.
+     */
+    private fun isArabicIndicDigit(ch: Char): Boolean {
+        return ch in ARABIC_INDIC_DIGIT_START..ARABIC_INDIC_DIGIT_END ||
+               ch in EXTENDED_ARABIC_INDIC_DIGIT_START..EXTENDED_ARABIC_INDIC_DIGIT_END
+    }
+
+    /**
+     * Check if a character is an Arabic letter (not a digit).
+     */
+    private fun isArabicLetter(ch: Char): Boolean {
+        if (isArabicIndicDigit(ch)) return false
+        return ch in ARABIC_RANGE_START..ARABIC_RANGE_END ||
+               ch in ARABIC_EXT_A_START..ARABIC_EXT_A_END ||
+               ch in ARABIC_PRESENTATION_A_START..ARABIC_PRESENTATION_A_END ||
+               ch in ARABIC_PRESENTATION_B_START..ARABIC_PRESENTATION_B_END
+    }
+
+    /**
+     * Check if a string contains Arabic letters (excluding Arabic-Indic digits).
      */
     private fun containsArabic(text: String): Boolean {
-        return text.any { ch ->
-            ch in ARABIC_RANGE_START..ARABIC_RANGE_END ||
-            ch in ARABIC_EXT_A_START..ARABIC_EXT_A_END ||
-            ch in ARABIC_PRESENTATION_A_START..ARABIC_PRESENTATION_A_END ||
-            ch in ARABIC_PRESENTATION_B_START..ARABIC_PRESENTATION_B_END
+        return text.any { isArabicLetter(it) }
+    }
+
+    /**
+     * Smart reversal for Arabic text that preserves LTR digit sequences.
+     *
+     * Splits text into runs of Arabic letters vs non-Arabic (digits, spaces, punctuation).
+     * Reverses Arabic letter runs and overall run order, but keeps digit/non-Arabic runs intact.
+     *
+     * Example: CTC outputs "٥٤٣٢١ مقر" → split into ["٥٤٣٢١", " ", "مقر"]
+     *   → reverse Arabic runs: ["٥٤٣٢١", " ", "رقم"]
+     *   → reverse run order: ["رقم", " ", "٥٤٣٢١"]
+     *   → join: "رقم ١٢٣٤٥" ... wait, digits are already LTR in each run
+     *   Actually: "رقم ٥٤٣٢١" but the digit run "٥٤٣٢١" was already in CTC (visual) order.
+     *   Since CTC reads L→R, the digit run is already correct, so just reverse run order + Arabic runs.
+     */
+    private fun smartArabicReverse(text: String): String {
+        // Split into runs: each run is either all-Arabic-letters or all-non-Arabic
+        val runs = mutableListOf<String>()
+        val currentRun = StringBuilder()
+        var currentIsArabic: Boolean? = null
+
+        for (ch in text) {
+            val charIsArabic = isArabicLetter(ch)
+            if (currentIsArabic != null && charIsArabic != currentIsArabic) {
+                runs.add(currentRun.toString())
+                currentRun.clear()
+            }
+            currentRun.append(ch)
+            currentIsArabic = charIsArabic
         }
+        if (currentRun.isNotEmpty()) {
+            runs.add(currentRun.toString())
+        }
+
+        // Reverse Arabic letter runs (characters within the run), keep non-Arabic runs as-is
+        val processedRuns = runs.map { run ->
+            if (run.any { isArabicLetter(it) }) {
+                run.reversed()
+            } else {
+                run
+            }
+        }
+
+        // Reverse overall run order (RTL reordering)
+        val result = processedRuns.reversed().joinToString("")
+        Log.d(TAG, "Smart Arabic reverse: '$text' → '$result'")
+        return result
     }
 
     // ─── Image Utilities ──────────────────────────────────────────
@@ -689,6 +761,127 @@ class PaddleOcrEngine(private val context: Context) {
             floats[2 * h * w + i] = (((pixel shr 16) and 0xFF) / 255.0f - mean[2]) / std[2]   // R channel
         }
         return floats
+    }
+
+    /**
+     * Trim excess background from a cropped text region using Otsu thresholding
+     * and row/column projection to find the tight content bounding box.
+     * Returns the trimmed bitmap, or the original if trimming is not beneficial.
+     */
+    private fun trimCropBackground(bitmap: Bitmap): Bitmap {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w < 4 || h < 4) return bitmap
+
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        // Convert to grayscale luminance
+        val gray = IntArray(w * h)
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            val r = (p shr 16) and 0xFF
+            val g = (p shr 8) and 0xFF
+            val b = p and 0xFF
+            gray[i] = (0.299 * r + 0.587 * g + 0.114 * b).roundToInt()
+        }
+
+        // Otsu threshold
+        val histogram = IntArray(256)
+        for (v in gray) histogram[v]++
+
+        val total = w * h
+        var sumAll = 0.0
+        for (i in 0 until 256) sumAll += i * histogram[i].toDouble()
+
+        var sumB = 0.0
+        var wB = 0
+        var maxVariance = 0.0
+        var threshold = 128
+
+        for (t in 0 until 256) {
+            wB += histogram[t]
+            if (wB == 0) continue
+            val wF = total - wB
+            if (wF == 0) break
+
+            sumB += t * histogram[t].toDouble()
+            val meanB = sumB / wB
+            val meanF = (sumAll - sumB) / wF
+            val variance = wB.toDouble() * wF.toDouble() * (meanB - meanF) * (meanB - meanF)
+
+            if (variance > maxVariance) {
+                maxVariance = variance
+                threshold = t
+            }
+        }
+
+        // Create binary map (foreground = true where pixel is dark, i.e., ink)
+        val binary = BooleanArray(w * h)
+        for (i in gray.indices) {
+            binary[i] = gray[i] <= threshold
+        }
+
+        // Row projection: find rows with foreground pixels
+        var topRow = 0
+        var bottomRow = h - 1
+        for (y in 0 until h) {
+            var hasFg = false
+            for (x in 0 until w) {
+                if (binary[y * w + x]) { hasFg = true; break }
+            }
+            if (hasFg) { topRow = y; break }
+        }
+        for (y in h - 1 downTo 0) {
+            var hasFg = false
+            for (x in 0 until w) {
+                if (binary[y * w + x]) { hasFg = true; break }
+            }
+            if (hasFg) { bottomRow = y; break }
+        }
+
+        // Column projection: find columns with foreground pixels
+        var leftCol = 0
+        var rightCol = w - 1
+        for (x in 0 until w) {
+            var hasFg = false
+            for (y in 0 until h) {
+                if (binary[y * w + x]) { hasFg = true; break }
+            }
+            if (hasFg) { leftCol = x; break }
+        }
+        for (x in w - 1 downTo 0) {
+            var hasFg = false
+            for (y in 0 until h) {
+                if (binary[y * w + x]) { hasFg = true; break }
+            }
+            if (hasFg) { rightCol = x; break }
+        }
+
+        // Add padding (2-4px)
+        val pad = 3
+        val trimLeft = max(0, leftCol - pad)
+        val trimTop = max(0, topRow - pad)
+        val trimRight = min(w, rightCol + pad + 1)
+        val trimBottom = min(h, bottomRow + pad + 1)
+
+        val trimW = trimRight - trimLeft
+        val trimH = trimBottom - trimTop
+
+        // Skip if result is too small
+        if (trimW < 4 || trimH < 4) return bitmap
+
+        // Skip if trimming is negligible (less than 5% reduction on any side)
+        if (trimW >= w * 0.95f && trimH >= h * 0.95f) return bitmap
+
+        Log.d(TAG, "Trim: ${w}x${h} → ${trimW}x${trimH} (removed L:$trimLeft T:$trimTop R:${w - trimRight} B:${h - trimBottom})")
+
+        return try {
+            Bitmap.createBitmap(bitmap, trimLeft, trimTop, trimW, trimH)
+        } catch (e: Exception) {
+            Log.w(TAG, "Trim failed: ${e.message}")
+            bitmap
+        }
     }
 
     /**
