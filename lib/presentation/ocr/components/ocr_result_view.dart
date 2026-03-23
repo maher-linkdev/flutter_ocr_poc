@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../domain/entities/ocr_result.dart';
+import 'debug_pipeline_gallery.dart';
 
 /// Displays the OCR recognition results in a scrollable view.
 ///
@@ -78,6 +79,12 @@ class OcrResultView extends StatelessWidget {
           ...result.textBlocks.asMap().entries.map(
                 (entry) => _buildBlockCard(theme, entry.key, entry.value),
               ),
+        ],
+
+        // ─── Debug Pipeline Images ───
+        if (result.debugImageDir != null) ...[
+          const SizedBox(height: 16),
+          DebugPipelineGallery(debugImageDir: result.debugImageDir!),
         ],
       ],
     );

@@ -5,11 +5,13 @@ class OcrResultModel {
   final List<TextBlockModel> textBlocks;
   final int processingTimeMs;
   final String imagePath;
+  final String? debugImageDir;
 
   const OcrResultModel({
     required this.textBlocks,
     required this.processingTimeMs,
     required this.imagePath,
+    this.debugImageDir,
   });
 
   /// Creates an [OcrResultModel] from native platform data.
@@ -23,6 +25,7 @@ class OcrResultModel {
       textBlocks: blocks,
       processingTimeMs: map['processingTimeMs'] as int,
       imagePath: map['imagePath'] as String,
+      debugImageDir: map['debugImageDir'] as String?,
     );
   }
 
@@ -31,6 +34,7 @@ class OcrResultModel {
       'textBlocks': textBlocks.map((b) => b.toMap()).toList(),
       'processingTimeMs': processingTimeMs,
       'imagePath': imagePath,
+      if (debugImageDir != null) 'debugImageDir': debugImageDir,
     };
   }
 }

@@ -35,13 +35,13 @@ class OcrNativeDataSourceImpl implements OcrNativeDataSource {
         {
           'detModelFileName': AppConstants.detModelFileName,
           'recModelFileName': AppConstants.recModelFileName,
-          'clsModelFileName': AppConstants.clsModelFileName,
           'labelFileName': AppConstants.labelFileName,
           'threadCount': AppConstants.defaultThreadCount,
           'enableContrastEnhance': AppConstants.enableRecContrastEnhance,
           if (AppConstants.recOnnxFileName != null)
             'recOnnxFileName': AppConstants.recOnnxFileName,
           'enablePreprocessing': AppConstants.enablePreprocessing,
+          'saveDebugImages': AppConstants.saveDebugImages,
           if (AppConstants.superResModelFileName != null)
             'superResModelFileName': AppConstants.superResModelFileName,
         },

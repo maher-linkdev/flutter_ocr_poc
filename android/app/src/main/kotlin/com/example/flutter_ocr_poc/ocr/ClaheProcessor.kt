@@ -16,7 +16,7 @@ import kotlin.math.roundToInt
  */
 class ClaheProcessor(
     private val clipLimit: Double = 2.0,
-    private val tilesX: Int = 8,
+    private val tilesX: Int = 4,
     private val tilesY: Int = 8
 ) {
     companion object {

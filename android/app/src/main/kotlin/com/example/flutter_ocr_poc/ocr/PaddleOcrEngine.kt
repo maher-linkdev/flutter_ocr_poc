@@ -3,7 +3,6 @@ package com.example.flutter_ocr_poc.ocr
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.util.Log
 import com.baidu.paddle.lite.MobileConfig
 import com.baidu.paddle.lite.PaddlePredictor
@@ -12,17 +11,14 @@ import com.example.flutter_ocr_poc.ocr.preprocessing.PreprocessConfig
 import com.example.flutter_ocr_poc.ocr.preprocessing.TextCropPreprocessor
 import java.io.File
 import java.io.FileOutputStream
-import java.util.LinkedList
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 /**
  * Native PaddleOCR engine using Paddle Lite for on-device inference.
  *
- * Pipeline: Image → Detection → Crop → Classification → Recognition
+ * Pipeline: Image → Detection → Crop → Trim → Preprocess → CLAHE → Recognition
  */
 class PaddleOcrEngine(private val context: Context) {
 
@@ -68,11 +64,9 @@ class PaddleOcrEngine(private val context: Context) {
     private var detPredictor: PaddlePredictor? = null
     private var recPredictor: PaddlePredictor? = null
     private var recOnnxRunner: RecOnnxRunner? = null
-    private var clsPredictor: PaddlePredictor? = null
 
     private var detModelPath: String? = null
     private var recModelPath: String? = null
-    private var clsModelPath: String? = null
     private var labelPath: String? = null
     private var threadCount: Int = 4
     private var enableContrastEnhance: Boolean = false
@@ -82,6 +76,7 @@ class PaddleOcrEngine(private val context: Context) {
     private var labelList: List<String> = emptyList()
     private val claheProcessor = ClaheProcessor()
     private var textCropPreprocessor: TextCropPreprocessor? = null
+    val debugSaver = DebugImageSaver(context)
 
     /**
      * Initialize the OCR engine by copying models and loading predictors.
@@ -91,7 +86,6 @@ class PaddleOcrEngine(private val context: Context) {
     fun initialize(
         detModelFileName: String,
         recModelFileName: String,
-        clsModelFileName: String,
         labelFileName: String,
         threadCount: Int = 4,
         enableContrastEnhance: Boolean = false,
@@ -105,15 +99,13 @@ class PaddleOcrEngine(private val context: Context) {
 
         // Copy assets to internal storage
         detModelPath = copyAssetToInternal("$MODELS_DIR/$detModelFileName")
-        clsModelPath = copyAssetToInternal("$MODELS_DIR/$clsModelFileName")
         labelPath = copyAssetToInternal("$LABELS_DIR/$labelFileName")
 
         // Load character dictionary
         labelList = loadLabelList(labelPath!!)
 
-        // Load Paddle Lite predictors (det + cls always; rec only when not using ONNX)
+        // Load Paddle Lite predictors (det always; rec only when not using ONNX)
         detPredictor = loadModel(detModelPath!!)
-        clsPredictor = loadModel(clsModelPath!!)
 
         if (recOnnxFileName != null) {
             // PaddleOCR Arabic rec via ONNX Runtime
@@ -150,7 +142,6 @@ class PaddleOcrEngine(private val context: Context) {
         isInitialized = true
         Log.i(TAG, "OCR Engine initialized successfully")
         Log.i(TAG, "  Detection model: $detModelPath")
-        Log.i(TAG, "  Classification model: $clsModelPath")
         Log.i(TAG, "  Label dictionary: ${labelList.size} characters")
         if (enableContrastEnhance) {
             Log.i(TAG, "  CLAHE contrast enhancement: enabled")
@@ -177,27 +168,32 @@ class PaddleOcrEngine(private val context: Context) {
         val imgHeight = bitmap.height
         Log.d(TAG, "Input image: ${imgWidth}x${imgHeight}")
 
+        // Start debug session
+        val debugImageDir = debugSaver.startSession()
+
         // Step 1: Detection — find text regions
         val boxes = runDetection(bitmap)
         Log.d(TAG, "Detected ${boxes.size} text regions")
 
-        // Step 2+3: For each box, crop → classify → recognize
+        // Save detection overlay with all bounding boxes
+        debugSaver.saveDetectionOverlay(bitmap, boxes)
+
+        // Step 2+3: For each box, crop → trim → recognize
         val textBlocks = mutableListOf<Map<String, Any>>()
-        for (box in boxes) {
+        for ((regionIndex, box) in boxes.withIndex()) {
             try {
                 // Crop text region from original image
                 val cropped = cropTextRegion(bitmap, box)
                 if (cropped == null || cropped.width < 2 || cropped.height < 2) continue
+                debugSaver.saveRegionStage(cropped, regionIndex, "01_cropped")
 
                 // Trim excess background from detection unclip expansion
                 val trimmed = trimCropBackground(cropped)
                 if (trimmed !== cropped) cropped.recycle()
-
-                // Classify text orientation and rotate if needed
-                val oriented = classifyAndRotate(trimmed)
+                debugSaver.saveRegionStage(trimmed, regionIndex, "02_trimmed")
 
                 // Recognize text
-                val (text, confidence) = runRecognition(oriented)
+                val (text, confidence) = runRecognition(trimmed, regionIndex)
 
                 if (text.isNotBlank() && confidence > 0.1f) {
                     textBlocks.add(
@@ -211,7 +207,7 @@ class PaddleOcrEngine(private val context: Context) {
                     )
                 }
 
-                oriented.recycle()
+                trimmed.recycle()
             } catch (e: Exception) {
                 Log.w(TAG, "Error processing text region: ${e.message}")
             }
@@ -222,11 +218,15 @@ class PaddleOcrEngine(private val context: Context) {
 
         bitmap.recycle()
 
-        return mapOf(
+        val result = mutableMapOf<String, Any>(
             "textBlocks" to textBlocks,
             "processingTimeMs" to processingTimeMs.toInt(),
             "imagePath" to imagePath
         )
+        if (debugImageDir != null) {
+            result["debugImageDir"] = debugImageDir
+        }
+        return result
     }
 
     /**
@@ -239,7 +239,6 @@ class PaddleOcrEngine(private val context: Context) {
         recOnnxRunner = null
         detPredictor = null
         recPredictor = null
-        clsPredictor = null
         isInitialized = false
         Log.i(TAG, "OCR Engine released")
     }
@@ -480,42 +479,6 @@ class PaddleOcrEngine(private val context: Context) {
         return labels
     }
 
-    // ─── Classification Pipeline ──────────────────────────────────
-
-    /**
-     * Classify text orientation and rotate 180° if needed.
-     */
-    private fun classifyAndRotate(cropped: Bitmap): Bitmap {
-        val predictor = clsPredictor ?: return cropped
-
-        val clsH = 48
-        val clsW = 192
-
-        val resized = Bitmap.createScaledBitmap(cropped, clsW, clsH, true)
-        val inputData = bitmapToCHW(resized, DET_MEAN, DET_STD)
-
-        val inputTensor = predictor.getInput(0)
-        inputTensor.resize(longArrayOf(1, 3, clsH.toLong(), clsW.toLong()))
-        inputTensor.setData(inputData)
-        predictor.run()
-
-        val outputTensor = predictor.getOutput(0)
-        val outputData = outputTensor.getFloatData()
-
-        resized.recycle()
-
-        // Check if text is rotated 180°
-        // outputData[0] = score for 0°, outputData[1] = score for 180°
-        if (outputData.size >= 2 && outputData[1] > outputData[0] && outputData[1] > 0.9f) {
-            val matrix = Matrix()
-            matrix.postRotate(180f)
-            val rotated = Bitmap.createBitmap(cropped, 0, 0, cropped.width, cropped.height, matrix, true)
-            return rotated
-        }
-
-        return cropped
-    }
-
     // ─── Recognition Pipeline ─────────────────────────────────────
 
     /**
@@ -530,20 +493,20 @@ class PaddleOcrEngine(private val context: Context) {
      * Run text recognition on a cropped text region.
      * Priority: PaddleOCR ONNX → Paddle Lite.
      */
-    private fun runRecognition(bitmap: Bitmap): Pair<String, Float> {
+    private fun runRecognition(bitmap: Bitmap, regionIndex: Int = -1): Pair<String, Float> {
         val onnxRunner = recOnnxRunner
         val predictor = recPredictor
 
         if (onnxRunner != null) {
-            return runRecognitionOnnx(bitmap, onnxRunner)
+            return runRecognitionOnnx(bitmap, onnxRunner, regionIndex)
         }
         if (predictor != null) {
-            return runRecognitionPaddle(bitmap, predictor)
+            return runRecognitionPaddle(bitmap, predictor, regionIndex)
         }
         throw IllegalStateException("Recognition model not loaded")
     }
 
-    private fun runRecognitionOnnx(bitmap: Bitmap, runner: RecOnnxRunner): Pair<String, Float> {
+    private fun runRecognitionOnnx(bitmap: Bitmap, runner: RecOnnxRunner, regionIndex: Int): Pair<String, Float> {
         var toRecognize = bitmap
 
         // Preprocessing pipeline (before CLAHE)
@@ -553,12 +516,14 @@ class PaddleOcrEngine(private val context: Context) {
             if (preprocessed !== toRecognize && toRecognize !== bitmap) toRecognize.recycle()
             toRecognize = preprocessed
         }
+        if (regionIndex >= 0) debugSaver.saveRegionStage(toRecognize, regionIndex, "03_preprocessed")
 
         if (enableContrastEnhance) {
             val enhanced = enhanceContrastForRecognition(toRecognize)
             if (enhanced !== toRecognize && toRecognize !== bitmap) toRecognize.recycle()
             toRecognize = enhanced
         }
+        if (regionIndex >= 0) debugSaver.saveRegionStage(toRecognize, regionIndex, "04_clahe")
 
         val imgH = REC_IMAGE_HEIGHT
         val ratio = imgH.toFloat() / toRecognize.height
@@ -575,7 +540,7 @@ class PaddleOcrEngine(private val context: Context) {
         return ctcGreedyDecode(outputData, outputShape)
     }
 
-    private fun runRecognitionPaddle(bitmap: Bitmap, predictor: PaddlePredictor): Pair<String, Float> {
+    private fun runRecognitionPaddle(bitmap: Bitmap, predictor: PaddlePredictor, regionIndex: Int): Pair<String, Float> {
         var toRecognize = bitmap
 
         // Preprocessing pipeline (before CLAHE)
@@ -585,12 +550,14 @@ class PaddleOcrEngine(private val context: Context) {
             if (preprocessed !== toRecognize && toRecognize !== bitmap) toRecognize.recycle()
             toRecognize = preprocessed
         }
+        if (regionIndex >= 0) debugSaver.saveRegionStage(toRecognize, regionIndex, "03_preprocessed")
 
         if (enableContrastEnhance) {
             val enhanced = enhanceContrastForRecognition(toRecognize)
             if (enhanced !== toRecognize && toRecognize !== bitmap) toRecognize.recycle()
             toRecognize = enhanced
         }
+        if (regionIndex >= 0) debugSaver.saveRegionStage(toRecognize, regionIndex, "04_clahe")
 
         val imgH = REC_IMAGE_HEIGHT
         val ratio = imgH.toFloat() / toRecognize.height

@@ -14,10 +14,14 @@ class OcrResult {
   /// Source image path that was processed.
   final String imagePath;
 
+  /// Path to debug pipeline images directory, if debug saving was enabled.
+  final String? debugImageDir;
+
   const OcrResult({
     required this.textBlocks,
     required this.processingTimeMs,
     required this.imagePath,
+    this.debugImageDir,
   });
 
   /// All recognized text combined into a single string.
@@ -44,9 +48,11 @@ class OcrResult {
     return other is OcrResult &&
         other.processingTimeMs == processingTimeMs &&
         other.imagePath == imagePath &&
-        other.textBlocks.length == textBlocks.length;
+        other.textBlocks.length == textBlocks.length &&
+        other.debugImageDir == debugImageDir;
   }
 
   @override
-  int get hashCode => Object.hash(textBlocks, processingTimeMs, imagePath);
+  int get hashCode =>
+      Object.hash(textBlocks, processingTimeMs, imagePath, debugImageDir);
 }

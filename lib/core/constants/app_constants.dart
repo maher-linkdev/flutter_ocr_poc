@@ -14,7 +14,6 @@ abstract class AppConstants {
   static const String detModelFileName = 'PP-OCRv5_mobile_det.nb';
   /// Multilingual PP-OCRv5 rec (legacy Paddle Lite .nb).
   static const String recModelFileName = 'PP-OCRv5_mobile_rec.nb';
-  static const String clsModelFileName = 'ch_ppocr_mobile_v2.0_cls_slim_opt.nb';
 
   /// Recognition via ONNX Runtime (PaddleOCR Arabic-specific model).
   /// Run `python scripts/convert_arabic_to_onnx.py` to generate the ONNX file.
@@ -40,6 +39,10 @@ abstract class AppConstants {
   /// ESPCN 2× super-resolution ONNX model for small text crops.
   /// Set to null to disable super-resolution while keeping other stages.
   static const String? superResModelFileName = 'espcn_x2.onnx';
+  /// Save intermediate pipeline images (cropped, trimmed, preprocessed,
+  /// CLAHE) to the device cache for debugging.
+  static const bool saveDebugImages = true;
+
   static const double defaultDetDbThresh = 0.3;
   static const double defaultDetDbBoxThresh = 0.6;
   static const double defaultDetDbUnclipRatio = 1.5;

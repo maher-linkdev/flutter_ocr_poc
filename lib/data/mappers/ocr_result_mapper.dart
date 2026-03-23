@@ -15,6 +15,7 @@ abstract class OcrResultMapper {
       textBlocks: model.textBlocks.map(_textBlockToEntity).toList(),
       processingTimeMs: model.processingTimeMs,
       imagePath: model.imagePath,
+      debugImageDir: model.debugImageDir,
     );
   }
 

@@ -6,7 +6,7 @@ import 'base_usecase.dart';
 
 /// Use case to initialize the PaddleOCR engine.
 ///
-/// Loads detection, classification, and recognition models
+/// Loads detection and recognition models
 /// from bundled assets into memory for offline inference.
 class InitializeOcrEngine implements UseCase<bool, NoParams> {
   final OcrRepository repository;

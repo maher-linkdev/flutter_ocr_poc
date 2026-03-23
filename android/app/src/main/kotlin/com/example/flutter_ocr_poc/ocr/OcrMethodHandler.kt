@@ -33,7 +33,6 @@ class OcrMethodHandler(
      * Expected arguments:
      * - detModelFileName: String — detection model .nb file
      * - recModelFileName: String — recognition model .nb file
-     * - clsModelFileName: String — classification model .nb file
      * - labelFileName: String — character dictionary file
      * - threadCount: Int — number of CPU threads
      */
@@ -44,8 +43,6 @@ class OcrMethodHandler(
                     ?: throw IllegalArgumentException("detModelFileName required")
                 val recModel = call.argument<String>("recModelFileName")
                     ?: throw IllegalArgumentException("recModelFileName required")
-                val clsModel = call.argument<String>("clsModelFileName")
-                    ?: throw IllegalArgumentException("clsModelFileName required")
                 val labelFile = call.argument<String>("labelFileName")
                     ?: throw IllegalArgumentException("labelFileName required")
                 val threadCount = call.argument<Int>("threadCount") ?: 4
@@ -54,11 +51,13 @@ class OcrMethodHandler(
                 val enablePreprocessing = call.argument<Boolean>("enablePreprocessing") ?: false
                 val superResModelFileName = call.argument<String>("superResModelFileName")
 
+                val saveDebugImages = call.argument<Boolean>("saveDebugImages") ?: false
+
                 val engine = PaddleOcrEngine(context)
+                engine.debugSaver.enabled = saveDebugImages
                 engine.initialize(
                     detModelFileName = detModel,
                     recModelFileName = recModel,
-                    clsModelFileName = clsModel,
                     labelFileName = labelFile,
                     threadCount = threadCount,
                     enableContrastEnhance = enableContrastEnhance,
