@@ -44,6 +44,10 @@ class OcrNativeDataSourceImpl implements OcrNativeDataSource {
           'saveDebugImages': AppConstants.saveDebugImages,
           if (AppConstants.superResModelFileName != null)
             'superResModelFileName': AppConstants.superResModelFileName,
+          if (AppConstants.docOrientModelFileName != null)
+            'docOrientModelFileName': AppConstants.docOrientModelFileName,
+          if (AppConstants.docUnwarpModelFileName != null)
+            'docUnwarpModelFileName': AppConstants.docUnwarpModelFileName,
         },
       );
       return result ?? false;

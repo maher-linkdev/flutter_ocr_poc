@@ -17,11 +17,15 @@ class OcrResult {
   /// Path to debug pipeline images directory, if debug saving was enabled.
   final String? debugImageDir;
 
+  /// Path to the document-preprocessed image (after orientation + unwarp), if available.
+  final String? preprocessedImagePath;
+
   const OcrResult({
     required this.textBlocks,
     required this.processingTimeMs,
     required this.imagePath,
     this.debugImageDir,
+    this.preprocessedImagePath,
   });
 
   /// All recognized text combined into a single string.
@@ -49,10 +53,16 @@ class OcrResult {
         other.processingTimeMs == processingTimeMs &&
         other.imagePath == imagePath &&
         other.textBlocks.length == textBlocks.length &&
-        other.debugImageDir == debugImageDir;
+        other.debugImageDir == debugImageDir &&
+        other.preprocessedImagePath == preprocessedImagePath;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(textBlocks, processingTimeMs, imagePath, debugImageDir);
+  int get hashCode => Object.hash(
+        textBlocks,
+        processingTimeMs,
+        imagePath,
+        debugImageDir,
+        preprocessedImagePath,
+      );
 }

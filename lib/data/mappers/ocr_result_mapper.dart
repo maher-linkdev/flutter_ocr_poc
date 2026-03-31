@@ -16,6 +16,7 @@ abstract class OcrResultMapper {
       processingTimeMs: model.processingTimeMs,
       imagePath: model.imagePath,
       debugImageDir: model.debugImageDir,
+      preprocessedImagePath: model.preprocessedImagePath,
     );
   }
 

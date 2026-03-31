@@ -6,12 +6,14 @@ class OcrResultModel {
   final int processingTimeMs;
   final String imagePath;
   final String? debugImageDir;
+  final String? preprocessedImagePath;
 
   const OcrResultModel({
     required this.textBlocks,
     required this.processingTimeMs,
     required this.imagePath,
     this.debugImageDir,
+    this.preprocessedImagePath,
   });
 
   /// Creates an [OcrResultModel] from native platform data.
@@ -26,6 +28,7 @@ class OcrResultModel {
       processingTimeMs: map['processingTimeMs'] as int,
       imagePath: map['imagePath'] as String,
       debugImageDir: map['debugImageDir'] as String?,
+      preprocessedImagePath: map['preprocessedImagePath'] as String?,
     );
   }
 
@@ -35,6 +38,8 @@ class OcrResultModel {
       'processingTimeMs': processingTimeMs,
       'imagePath': imagePath,
       if (debugImageDir != null) 'debugImageDir': debugImageDir,
+      if (preprocessedImagePath != null)
+        'preprocessedImagePath': preprocessedImagePath,
     };
   }
 }

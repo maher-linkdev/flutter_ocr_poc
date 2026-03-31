@@ -7,6 +7,7 @@ import android.util.Log
 import com.baidu.paddle.lite.MobileConfig
 import com.baidu.paddle.lite.PaddlePredictor
 import com.baidu.paddle.lite.PowerMode
+import com.example.flutter_ocr_poc.ocr.docprep.DocPreprocessor
 import com.example.flutter_ocr_poc.ocr.preprocessing.PreprocessConfig
 import com.example.flutter_ocr_poc.ocr.preprocessing.TextCropPreprocessor
 import java.io.File
@@ -18,7 +19,7 @@ import kotlin.math.roundToInt
 /**
  * Native PaddleOCR engine using Paddle Lite for on-device inference.
  *
- * Pipeline: Image → Detection → Crop → Trim → Preprocess → CLAHE → Recognition
+ * Pipeline: Image → [DocPrep: Orient+Unwarp] → Detection → Crop → Trim → Preprocess → CLAHE → Recognition
  */
 class PaddleOcrEngine(private val context: Context) {
 
@@ -76,6 +77,7 @@ class PaddleOcrEngine(private val context: Context) {
     private var labelList: List<String> = emptyList()
     private val claheProcessor = ClaheProcessor()
     private var textCropPreprocessor: TextCropPreprocessor? = null
+    private var docPreprocessor: DocPreprocessor? = null
     val debugSaver = DebugImageSaver(context)
 
     /**
@@ -91,7 +93,9 @@ class PaddleOcrEngine(private val context: Context) {
         enableContrastEnhance: Boolean = false,
         recOnnxFileName: String? = null,
         enablePreprocessing: Boolean = false,
-        superResModelFileName: String? = null
+        superResModelFileName: String? = null,
+        docOrientModelFileName: String? = null,
+        docUnwarpModelFileName: String? = null
     ) {
         this.threadCount = threadCount
         this.enableContrastEnhance = enableContrastEnhance
@@ -139,6 +143,23 @@ class PaddleOcrEngine(private val context: Context) {
             }
         }
 
+        // Initialize document-level preprocessing (orientation + unwarping)
+        if (docOrientModelFileName != null || docUnwarpModelFileName != null) {
+            val orientPath = docOrientModelFileName?.let {
+                try { copyAssetToInternal("$MODELS_DIR/$it") }
+                catch (e: Exception) { Log.w(TAG, "Doc orient model not found: ${e.message}"); null }
+            }
+            val unwarpPath = docUnwarpModelFileName?.let {
+                try { copyAssetToInternal("$MODELS_DIR/$it") }
+                catch (e: Exception) { Log.w(TAG, "Doc unwarp model not found: ${e.message}"); null }
+            }
+            if (orientPath != null || unwarpPath != null) {
+                val dp = DocPreprocessor(context)
+                dp.initialize(orientPath, unwarpPath)
+                docPreprocessor = dp
+            }
+        }
+
         isInitialized = true
         Log.i(TAG, "OCR Engine initialized successfully")
         Log.i(TAG, "  Detection model: $detModelPath")
@@ -148,6 +169,9 @@ class PaddleOcrEngine(private val context: Context) {
         }
         if (enablePreprocessing) {
             Log.i(TAG, "  Preprocessing pipeline: enabled")
+        }
+        if (docPreprocessor?.isEnabled == true) {
+            Log.i(TAG, "  Doc preprocessing (orientation/unwarp): enabled")
         }
     }
 
@@ -161,7 +185,7 @@ class PaddleOcrEngine(private val context: Context) {
 
         val startTime = System.currentTimeMillis()
 
-        val bitmap = BitmapFactory.decodeFile(imagePath)
+        var bitmap = BitmapFactory.decodeFile(imagePath)
             ?: throw IllegalArgumentException("Cannot decode image: $imagePath")
 
         val imgWidth = bitmap.width
@@ -170,6 +194,18 @@ class PaddleOcrEngine(private val context: Context) {
 
         // Start debug session
         val debugImageDir = debugSaver.startSession()
+
+        // Step 0: Document-level preprocessing (orientation + unwarping)
+        var preprocessedImagePath: String? = null
+        val docPrep = docPreprocessor
+        if (docPrep != null && docPrep.isEnabled) {
+            val prepResult = docPrep.process(bitmap)
+            if (prepResult.bitmap !== bitmap) {
+                bitmap.recycle()
+                bitmap = prepResult.bitmap
+            }
+            preprocessedImagePath = docPrep.savePreprocessedImage(bitmap, debugImageDir)
+        }
 
         // Step 1: Detection — find text regions
         val boxes = runDetection(bitmap)
@@ -226,6 +262,9 @@ class PaddleOcrEngine(private val context: Context) {
         if (debugImageDir != null) {
             result["debugImageDir"] = debugImageDir
         }
+        if (preprocessedImagePath != null) {
+            result["preprocessedImagePath"] = preprocessedImagePath
+        }
         return result
     }
 
@@ -233,6 +272,8 @@ class PaddleOcrEngine(private val context: Context) {
      * Release all native resources.
      */
     fun release() {
+        docPreprocessor?.close()
+        docPreprocessor = null
         textCropPreprocessor?.close()
         textCropPreprocessor = null
         recOnnxRunner?.close()

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -81,11 +83,89 @@ class OcrResultView extends StatelessWidget {
               ),
         ],
 
+        // ─── Preprocessed Image ───
+        if (result.preprocessedImagePath != null) ...[
+          const SizedBox(height: 24),
+          _buildPreprocessedSection(context, theme),
+        ],
+
         // ─── Debug Pipeline Images ───
         if (result.debugImageDir != null) ...[
           const SizedBox(height: 16),
           DebugPipelineGallery(debugImageDir: result.debugImageDir!),
         ],
+      ],
+    );
+  }
+
+  Widget _buildPreprocessedSection(BuildContext context, ThemeData theme) {
+    final file = File(result.preprocessedImagePath!);
+    if (!file.existsSync()) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              Icons.auto_fix_high,
+              size: 20,
+              color: theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Preprocessed Image',
+              style: theme.textTheme.titleSmall,
+            ),
+            const Spacer(),
+            Text(
+              'Orientation + Unwarp',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        GestureDetector(
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => Scaffold(
+                backgroundColor: Colors.black,
+                appBar: AppBar(
+                  title: const Text('Preprocessed Image'),
+                  backgroundColor: Colors.black,
+                  foregroundColor: Colors.white,
+                ),
+                body: Center(
+                  child: InteractiveViewer(
+                    minScale: 0.5,
+                    maxScale: 5.0,
+                    child: Image.file(file, fit: BoxFit.contain),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          child: Container(
+            constraints: const BoxConstraints(maxHeight: 280),
+            width: double.infinity,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: theme.colorScheme.outlineVariant),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: Image.file(
+                file,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Icon(Icons.broken_image_outlined, size: 32),
+                ),
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }

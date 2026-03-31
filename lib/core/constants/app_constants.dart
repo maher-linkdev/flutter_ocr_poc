@@ -39,6 +39,15 @@ abstract class AppConstants {
   /// ESPCN 2× super-resolution ONNX model for small text crops.
   /// Set to null to disable super-resolution while keeping other stages.
   static const String? superResModelFileName = 'espcn_x2.onnx';
+
+  /// Document-level preprocessing models (run BEFORE detection).
+  /// PP-LCNet orientation classifier — detects 0°/90°/180°/270° and auto-rotates.
+  static const String? docOrientModelFileName =
+      'PP-LCNet_x1_0_doc_ori_infer.onnx';
+
+  /// UVDoc document unwarping — corrects geometric distortion / perspective.
+  static const String? docUnwarpModelFileName = 'UVDoc_infer.onnx';
+
   /// Save intermediate pipeline images (cropped, trimmed, preprocessed,
   /// CLAHE) to the device cache for debugging.
   static const bool saveDebugImages = true;

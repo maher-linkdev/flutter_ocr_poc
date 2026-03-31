@@ -52,6 +52,8 @@ class OcrMethodHandler(
                 val superResModelFileName = call.argument<String>("superResModelFileName")
 
                 val saveDebugImages = call.argument<Boolean>("saveDebugImages") ?: false
+                val docOrientModelFileName = call.argument<String>("docOrientModelFileName")
+                val docUnwarpModelFileName = call.argument<String>("docUnwarpModelFileName")
 
                 val engine = PaddleOcrEngine(context)
                 engine.debugSaver.enabled = saveDebugImages
@@ -63,7 +65,9 @@ class OcrMethodHandler(
                     enableContrastEnhance = enableContrastEnhance,
                     recOnnxFileName = recOnnxFileName,
                     enablePreprocessing = enablePreprocessing,
-                    superResModelFileName = superResModelFileName
+                    superResModelFileName = superResModelFileName,
+                    docOrientModelFileName = docOrientModelFileName,
+                    docUnwarpModelFileName = docUnwarpModelFileName
                 )
                 ocrEngine = engine
 
