@@ -43,3 +43,12 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Python virtual environments and large local tooling (never commit)
+.venv/
+**/.venv/
+scripts/**/venv/
+
+# Script downloads / full PaddleOCR build trees (large; regenerate locally)
+scripts/.nb_download/
+scripts/arabic_rec_build/
