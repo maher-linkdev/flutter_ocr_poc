@@ -1,6 +1,7 @@
 package com.example.flutter_ocr_poc.ocr.docprep
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.util.Log
 import ai.onnxruntime.OnnxTensor
@@ -8,6 +9,7 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
@@ -25,6 +27,9 @@ class DocUnwarpRunner(modelPath: String) {
         private const val TAG = "DocUnwarpRunner"
         private const val TARGET_H = 488
         private const val TARGET_W = 712
+        private const val BORDER_PAD_RATIO = 0.03f
+        private const val MIN_BORDER_PAD_PX = 12
+        private const val MAX_BORDER_PAD_PX = 48
     }
 
     private val env = OrtEnvironment.getEnvironment()
@@ -37,9 +42,21 @@ class DocUnwarpRunner(modelPath: String) {
         val origW = bitmap.width
         val origH = bitmap.height
 
-        val resized = Bitmap.createScaledBitmap(bitmap, TARGET_W, TARGET_H, true)
+        // Add a small white border before unwarping to absorb model edge artifacts.
+        val edgePad = ((max(origW, origH) * BORDER_PAD_RATIO).roundToInt())
+            .coerceIn(MIN_BORDER_PAD_PX, MAX_BORDER_PAD_PX)
+        val paddedW = origW + edgePad * 2
+        val paddedH = origH + edgePad * 2
+        val padded = Bitmap.createBitmap(paddedW, paddedH, Bitmap.Config.ARGB_8888)
+        Canvas(padded).apply {
+            drawColor(Color.WHITE)
+            drawBitmap(bitmap, edgePad.toFloat(), edgePad.toFloat(), null)
+        }
+
+        val resized = Bitmap.createScaledBitmap(padded, TARGET_W, TARGET_H, true)
         val inputData = bitmapToChw(resized)
-        if (resized != bitmap) resized.recycle()
+        if (resized !== padded) resized.recycle()
+        padded.recycle()
 
         val inputName = session.inputNames.iterator().next()
         val inputShape = longArrayOf(1, 3, TARGET_H.toLong(), TARGET_W.toLong())
@@ -65,16 +82,24 @@ class DocUnwarpRunner(modelPath: String) {
                 outBuf.get(outData)
 
                 val corrected = chwToBitmap(outData, outH, outW)
-                Log.i(TAG, "Unwarped: ${origW}x${origH} → ${outW}x${outH}")
+                Log.i(TAG, "Unwarped: ${origW}x${origH} (pad=$edgePad) → ${outW}x${outH}")
 
-                // Resize back to original dimensions
-                val final_ = if (corrected.width != origW || corrected.height != origH) {
-                    val scaled = Bitmap.createScaledBitmap(corrected, origW, origH, true)
+                // Resize back to padded dimensions, then remove the added border.
+                val scaledToPadded = if (corrected.width != paddedW || corrected.height != paddedH) {
+                    val scaled = Bitmap.createScaledBitmap(corrected, paddedW, paddedH, true)
                     corrected.recycle()
                     scaled
                 } else {
                     corrected
                 }
+
+                val final_ = try {
+                    Bitmap.createBitmap(scaledToPadded, edgePad, edgePad, origW, origH)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to remove pad after unwarp, fallback to direct resize: ${e.message}")
+                    Bitmap.createScaledBitmap(scaledToPadded, origW, origH, true)
+                }
+                if (scaledToPadded !== final_) scaledToPadded.recycle()
                 return final_
             } finally {
                 result.close()

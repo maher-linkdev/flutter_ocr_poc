@@ -17,6 +17,10 @@ abstract class OcrResultMapper {
       imagePath: model.imagePath,
       debugImageDir: model.debugImageDir,
       preprocessedImagePath: model.preprocessedImagePath,
+      preprocessedWithBoxesImagePath: model.preprocessedWithBoxesImagePath,
+      docPrepRotationAngle: model.docPrepRotationAngle,
+      docPrepDidUnwarp: model.docPrepDidUnwarp,
+      docPrepProcessingTimeMs: model.docPrepProcessingTimeMs,
     );
   }
 

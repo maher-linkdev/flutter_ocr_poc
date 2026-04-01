@@ -104,6 +104,66 @@ class DebugImageSaver(
     }
 
     /**
+     * Same drawing as [saveDetectionOverlay], saved as a dedicated preprocessed preview so the UI
+     * can show boxes on the doc-prep image (same pixel grid as [bitmap] passed to detection).
+     */
+    fun savePreprocessedWithBoxes(
+        bitmap: Bitmap,
+        boxes: List<List<FloatArray>>,
+        sessionDir: String?
+    ): String? {
+        val file = if (sessionDir != null) {
+            File(sessionDir, "00_doc_preprocessed_with_boxes.png")
+        } else {
+            val dir = File(context.cacheDir, "ocr_doc_prep")
+            dir.mkdirs()
+            File(dir, "last_doc_preprocessed_with_boxes.png")
+        }
+        val copy = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(copy)
+        val paint = Paint().apply {
+            color = Color.RED
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+            isAntiAlias = true
+        }
+        val textPaint = Paint().apply {
+            color = Color.RED
+            textSize = 28f
+            isAntiAlias = true
+            isFakeBoldText = true
+        }
+        for ((index, box) in boxes.withIndex()) {
+            if (box.size < 4) continue
+            val path = Path()
+            path.moveTo(box[0][0], box[0][1])
+            for (i in 1 until box.size) {
+                path.lineTo(box[i][0], box[i][1])
+            }
+            path.close()
+            canvas.drawPath(path, paint)
+            canvas.drawText(
+                index.toString(),
+                box[0][0] + 4f,
+                box[0][1] - 4f,
+                textPaint
+            )
+        }
+        return try {
+            FileOutputStream(file).use { out ->
+                copy.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            copy.recycle()
+            Log.d(TAG, "Saved: ${file.absolutePath}")
+            file.absolutePath
+        } catch (e: Exception) {
+            copy.recycle()
+            Log.w(TAG, "Failed to save preprocessed+boxes: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * Save a bitmap for a specific pipeline stage within a region.
      */
     fun saveRegionStage(bitmap: Bitmap, regionIndex: Int, stageName: String) {

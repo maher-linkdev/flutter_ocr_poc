@@ -2,7 +2,6 @@ package com.example.flutter_ocr_poc.ocr.docprep
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
@@ -10,7 +9,7 @@ import java.io.FileOutputStream
 /**
  * Full-image document preprocessor that runs BEFORE the OCR detection pipeline.
  *
- * Pipeline:  Original image → Orientation correction → UVDoc unwarping → Save result
+ * Pipeline:  Original image → Orientation → (optional) margin crop → UVDoc unwarp → Save result
  *
  * Both stages are optional and controlled by flags passed at initialization.
  */
@@ -61,6 +60,17 @@ class DocPreprocessor(private val context: Context) {
             }
         }
 
+        // Step 1b: Tight crop around document content (gradient energy) before UVDoc.
+        // Large top/bottom (or left/right) table margins stay in-frame after unwarp if we skip this,
+        // because UVDoc scales the entire photo to a fixed aspect — shrinking the card in the tensor.
+        if (unwarpRunner != null) {
+            val cropped = DocumentMarginCropper.cropIfNeeded(current)
+            if (cropped !== current) {
+                if (current !== bitmap) current.recycle()
+                current = cropped
+            }
+        }
+
         // Step 2: Document unwarping
         unwarpRunner?.let { runner ->
             val unwarped = runner.unwarp(current)
@@ -83,12 +93,20 @@ class DocPreprocessor(private val context: Context) {
     }
 
     /**
-     * Save the preprocessed image to the debug directory and return its path.
+     * Save the preprocessed image and return its absolute path.
+     *
+     * When [sessionDir] is set (debug session), writes `00_doc_preprocessed.png` next to other
+     * pipeline artifacts. Otherwise writes to app cache so the Flutter UI can still show the
+     * doc-prep result when debug image saving is disabled.
      */
     fun savePreprocessedImage(bitmap: Bitmap, sessionDir: String?): String? {
-        if (sessionDir == null) return null
-
-        val file = File(sessionDir, "00_doc_preprocessed.png")
+        val file = if (sessionDir != null) {
+            File(sessionDir, "00_doc_preprocessed.png")
+        } else {
+            val dir = File(context.cacheDir, "ocr_doc_prep")
+            dir.mkdirs()
+            File(dir, "last_doc_preprocessed.png")
+        }
         return try {
             FileOutputStream(file).use { out ->
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)

@@ -83,8 +83,10 @@ class OcrResultView extends StatelessWidget {
               ),
         ],
 
-        // ─── Preprocessed Image ───
-        if (result.preprocessedImagePath != null) ...[
+        // ─── Preprocessed Image (doc prep + optional detection overlay) ───
+        if (result.preprocessedImagePath != null ||
+            result.preprocessedWithBoxesImagePath != null ||
+            result.hasDocPrepMetadata) ...[
           const SizedBox(height: 24),
           _buildPreprocessedSection(context, theme),
         ],
@@ -99,8 +101,27 @@ class OcrResultView extends StatelessWidget {
   }
 
   Widget _buildPreprocessedSection(BuildContext context, ThemeData theme) {
-    final file = File(result.preprocessedImagePath!);
-    if (!file.existsSync()) return const SizedBox.shrink();
+    final boxesPath = result.preprocessedWithBoxesImagePath;
+    final plainPath = result.preprocessedImagePath;
+    final File? boxesFile =
+        boxesPath != null ? File(boxesPath) : null;
+    final File? plainFile =
+        plainPath != null ? File(plainPath) : null;
+    final bool boxesOk =
+        boxesFile != null && boxesFile.existsSync();
+    final bool plainOk = plainFile != null && plainFile.existsSync();
+    final File? file = boxesOk
+        ? boxesFile
+        : plainOk
+            ? plainFile
+            : null;
+    final imageExists = file != null;
+
+    final subtitle = result.hasDocPrepMetadata
+        ? '${result.docPrepRotationAngle}° · '
+            '${result.docPrepDidUnwarp == true ? 'unwarp' : 'no unwarp'} · '
+            '${result.docPrepProcessingTimeMs}ms'
+        : 'Orientation + Unwarp';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -119,53 +140,75 @@ class OcrResultView extends StatelessWidget {
             ),
             const Spacer(),
             Text(
-              'Orientation + Unwarp',
+              subtitle,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 8),
-        GestureDetector(
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => Scaffold(
-                backgroundColor: Colors.black,
-                appBar: AppBar(
-                  title: const Text('Preprocessed Image'),
+        if (boxesOk) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Showing detection boxes on the image used for OCR.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        if (!imageExists) ...[
+          const SizedBox(height: 8),
+          Text(
+            boxesPath == null && plainPath == null
+                ? 'No preview path from native layer.'
+                : 'Preview file missing on disk.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
+          ),
+        ],
+        if (file != null) ...[
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => Scaffold(
                   backgroundColor: Colors.black,
-                  foregroundColor: Colors.white,
+                  appBar: AppBar(
+                    title: const Text('Preprocessed Image'),
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                  ),
+                  body: Center(
+                    child: InteractiveViewer(
+                      minScale: 0.5,
+                      maxScale: 5.0,
+                      child: Image.file(file, fit: BoxFit.contain),
+                    ),
+                  ),
                 ),
-                body: Center(
-                  child: InteractiveViewer(
-                    minScale: 0.5,
-                    maxScale: 5.0,
-                    child: Image.file(file, fit: BoxFit.contain),
+              ),
+            ),
+            child: Container(
+              constraints: const BoxConstraints(maxHeight: 280),
+              width: double.infinity,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: theme.colorScheme.outlineVariant),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(11),
+                child: Image.file(
+                  file,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Center(
+                    child: Icon(Icons.broken_image_outlined, size: 32),
                   ),
                 ),
               ),
             ),
           ),
-          child: Container(
-            constraints: const BoxConstraints(maxHeight: 280),
-            width: double.infinity,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: theme.colorScheme.outlineVariant),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(11),
-              child: Image.file(
-                file,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Center(
-                  child: Icon(Icons.broken_image_outlined, size: 32),
-                ),
-              ),
-            ),
-          ),
-        ),
+        ],
       ],
     );
   }

@@ -8,12 +8,24 @@ class OcrResultModel {
   final String? debugImageDir;
   final String? preprocessedImagePath;
 
+  /// Same image native used for detection, with boxes drawn (PP-OCR det), if saved.
+  final String? preprocessedWithBoxesImagePath;
+
+  /// Document-level prep metadata (Android native), when orientation/unwarp ran.
+  final int? docPrepRotationAngle;
+  final bool? docPrepDidUnwarp;
+  final int? docPrepProcessingTimeMs;
+
   const OcrResultModel({
     required this.textBlocks,
     required this.processingTimeMs,
     required this.imagePath,
     this.debugImageDir,
     this.preprocessedImagePath,
+    this.preprocessedWithBoxesImagePath,
+    this.docPrepRotationAngle,
+    this.docPrepDidUnwarp,
+    this.docPrepProcessingTimeMs,
   });
 
   /// Creates an [OcrResultModel] from native platform data.
@@ -29,6 +41,11 @@ class OcrResultModel {
       imagePath: map['imagePath'] as String,
       debugImageDir: map['debugImageDir'] as String?,
       preprocessedImagePath: map['preprocessedImagePath'] as String?,
+      preprocessedWithBoxesImagePath:
+          map['preprocessedWithBoxesImagePath'] as String?,
+      docPrepRotationAngle: map['docPrepRotationAngle'] as int?,
+      docPrepDidUnwarp: map['docPrepDidUnwarp'] as bool?,
+      docPrepProcessingTimeMs: map['docPrepProcessingTimeMs'] as int?,
     );
   }
 
@@ -40,6 +57,12 @@ class OcrResultModel {
       if (debugImageDir != null) 'debugImageDir': debugImageDir,
       if (preprocessedImagePath != null)
         'preprocessedImagePath': preprocessedImagePath,
+      if (preprocessedWithBoxesImagePath != null)
+        'preprocessedWithBoxesImagePath': preprocessedWithBoxesImagePath,
+      if (docPrepRotationAngle != null) 'docPrepRotationAngle': docPrepRotationAngle,
+      if (docPrepDidUnwarp != null) 'docPrepDidUnwarp': docPrepDidUnwarp,
+      if (docPrepProcessingTimeMs != null)
+        'docPrepProcessingTimeMs': docPrepProcessingTimeMs,
     };
   }
 }

@@ -12,6 +12,8 @@ import com.example.flutter_ocr_poc.ocr.preprocessing.PreprocessConfig
 import com.example.flutter_ocr_poc.ocr.preprocessing.TextCropPreprocessor
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -197,9 +199,15 @@ class PaddleOcrEngine(private val context: Context) {
 
         // Step 0: Document-level preprocessing (orientation + unwarping)
         var preprocessedImagePath: String? = null
+        var docPrepRotationAngle: Int? = null
+        var docPrepDidUnwarp: Boolean? = null
+        var docPrepProcessingTimeMs: Long? = null
         val docPrep = docPreprocessor
         if (docPrep != null && docPrep.isEnabled) {
             val prepResult = docPrep.process(bitmap)
+            docPrepRotationAngle = prepResult.rotationAngle
+            docPrepDidUnwarp = prepResult.didUnwarp
+            docPrepProcessingTimeMs = prepResult.processingTimeMs
             if (prepResult.bitmap !== bitmap) {
                 bitmap.recycle()
                 bitmap = prepResult.bitmap
@@ -213,6 +221,8 @@ class PaddleOcrEngine(private val context: Context) {
 
         // Save detection overlay with all bounding boxes
         debugSaver.saveDetectionOverlay(bitmap, boxes)
+        val preprocessedWithBoxesImagePath =
+            debugSaver.savePreprocessedWithBoxes(bitmap, boxes, debugImageDir)
 
         // Step 2+3: For each box, crop → trim → recognize
         val textBlocks = mutableListOf<Map<String, Any>>()
@@ -264,6 +274,14 @@ class PaddleOcrEngine(private val context: Context) {
         }
         if (preprocessedImagePath != null) {
             result["preprocessedImagePath"] = preprocessedImagePath
+        }
+        if (preprocessedWithBoxesImagePath != null) {
+            result["preprocessedWithBoxesImagePath"] = preprocessedWithBoxesImagePath
+        }
+        if (docPrepRotationAngle != null && docPrepDidUnwarp != null && docPrepProcessingTimeMs != null) {
+            result["docPrepRotationAngle"] = docPrepRotationAngle
+            result["docPrepDidUnwarp"] = docPrepDidUnwarp
+            result["docPrepProcessingTimeMs"] = docPrepProcessingTimeMs.toInt()
         }
         return result
     }
@@ -866,12 +884,13 @@ class PaddleOcrEngine(private val context: Context) {
             if (hasFg) { rightCol = x; break }
         }
 
-        // Add padding (2-4px)
-        val pad = 3
-        val trimLeft = max(0, leftCol - pad)
-        val trimTop = max(0, topRow - pad)
-        val trimRight = min(w, rightCol + pad + 1)
-        val trimBottom = min(h, bottomRow + pad + 1)
+        // Keep a larger safety margin to avoid clipping glyph edges/diacritics.
+        val horizontalPad = 6
+        val verticalPad = 5
+        val trimLeft = max(0, leftCol - horizontalPad)
+        val trimTop = max(0, topRow - verticalPad)
+        val trimRight = min(w, rightCol + horizontalPad + 1)
+        val trimBottom = min(h, bottomRow + verticalPad + 1)
 
         val trimW = trimRight - trimLeft
         val trimH = trimBottom - trimTop
@@ -897,10 +916,11 @@ class PaddleOcrEngine(private val context: Context) {
      */
     private fun cropTextRegion(bitmap: Bitmap, box: List<FloatArray>): Bitmap? {
         // Get axis-aligned bounding rect from the quadrilateral
-        val minX = max(0, box.minOf { it[0] }.roundToInt())
-        val minY = max(0, box.minOf { it[1] }.roundToInt())
-        val maxX = min(bitmap.width, box.maxOf { it[0] }.roundToInt())
-        val maxY = min(bitmap.height, box.maxOf { it[1] }.roundToInt())
+        val cropMarginPx = 2
+        val minX = max(0, floor(box.minOf { it[0] }.toDouble()).toInt() - cropMarginPx)
+        val minY = max(0, floor(box.minOf { it[1] }.toDouble()).toInt() - cropMarginPx)
+        val maxX = min(bitmap.width, ceil(box.maxOf { it[0] }.toDouble()).toInt() + cropMarginPx)
+        val maxY = min(bitmap.height, ceil(box.maxOf { it[1] }.toDouble()).toInt() + cropMarginPx)
 
         val cropW = maxX - minX
         val cropH = maxY - minY

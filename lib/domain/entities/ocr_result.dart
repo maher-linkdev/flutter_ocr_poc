@@ -20,13 +20,31 @@ class OcrResult {
   /// Path to the document-preprocessed image (after orientation + unwarp), if available.
   final String? preprocessedImagePath;
 
+  /// Detection-stage image with bounding boxes drawn (same grid as OCR detection).
+  final String? preprocessedWithBoxesImagePath;
+
+  /// Document-level prep metadata when native layer reports it (e.g. Android).
+  final int? docPrepRotationAngle;
+  final bool? docPrepDidUnwarp;
+  final int? docPrepProcessingTimeMs;
+
   const OcrResult({
     required this.textBlocks,
     required this.processingTimeMs,
     required this.imagePath,
     this.debugImageDir,
     this.preprocessedImagePath,
+    this.preprocessedWithBoxesImagePath,
+    this.docPrepRotationAngle,
+    this.docPrepDidUnwarp,
+    this.docPrepProcessingTimeMs,
   });
+
+  /// Whether document-level orientation/unwarp was applied (native reported).
+  bool get hasDocPrepMetadata =>
+      docPrepRotationAngle != null &&
+      docPrepDidUnwarp != null &&
+      docPrepProcessingTimeMs != null;
 
   /// All recognized text combined into a single string.
   String get combinedText =>
@@ -54,7 +72,11 @@ class OcrResult {
         other.imagePath == imagePath &&
         other.textBlocks.length == textBlocks.length &&
         other.debugImageDir == debugImageDir &&
-        other.preprocessedImagePath == preprocessedImagePath;
+        other.preprocessedImagePath == preprocessedImagePath &&
+        other.preprocessedWithBoxesImagePath == preprocessedWithBoxesImagePath &&
+        other.docPrepRotationAngle == docPrepRotationAngle &&
+        other.docPrepDidUnwarp == docPrepDidUnwarp &&
+        other.docPrepProcessingTimeMs == docPrepProcessingTimeMs;
   }
 
   @override
@@ -64,5 +86,9 @@ class OcrResult {
         imagePath,
         debugImageDir,
         preprocessedImagePath,
+        preprocessedWithBoxesImagePath,
+        docPrepRotationAngle,
+        docPrepDidUnwarp,
+        docPrepProcessingTimeMs,
       );
 }
