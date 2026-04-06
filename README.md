@@ -2,6 +2,8 @@
 
 On-device Arabic ID card OCR using PaddleOCR (PP-OCRv5) with Paddle Lite and ONNX Runtime. Runs entirely on-device with no cloud dependencies.
 
+**Developers cloning the repo:** models are included under `assets/` (Git LFS is not required). See [docs/DEVELOPER_CLONE.md](docs/DEVELOPER_CLONE.md) for clone steps, what stays local, and when to consider Git LFS or Releases.
+
 ## How to Use
 
 1. Open the app and pick an image — camera, gallery, or file picker
