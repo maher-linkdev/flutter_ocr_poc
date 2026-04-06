@@ -47,6 +47,7 @@ app.*.map.json
 # Python virtual environments and large local tooling (never commit)
 .venv/
 **/.venv/
+scripts/.venv310/
 scripts/**/venv/
 
 # Script downloads / full PaddleOCR build trees (large; regenerate locally)
